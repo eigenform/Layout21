@@ -70,6 +70,7 @@ pub struct LefLibrary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[builder(default, setter(strip_option))]
     pub divider_char: Option<char>,
+
     /// Dimensional Units
     /// Recommended to be specified in a tech-lef. But turns up in libraries as well.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,18 +79,18 @@ pub struct LefLibrary {
 
     // Unsupported fields recommended for *either* LEF "cell libraries" or "technologies"
     /// Via Definitions (Unsupported)
-    #[serde(default, skip_serializing)]
-    #[builder(default)]
-    pub vias: Option<Unsupported>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vias: Vec<LefViaDefinition>,
     /// Syntax Extensions (Unsupported)
     #[serde(default, skip_serializing)]
     #[builder(default)]
     pub extensions: Option<Unsupported>,
+
     // Fields recommended for LEF technology descriptions, AKA "tech-lefs"
     /// Manufacturing Grid
-    #[serde(default, skip_serializing)]
-    #[builder(default)]
-    pub manufacturing_grid: Option<Unsupported>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(strip_option))]
+    pub manufacturing_grid: Option<LefDecimal>,
     /// "Use Min Spacing" Option
     #[serde(default, skip_serializing)]
     #[builder(default)]
@@ -291,10 +292,10 @@ pub struct LefPin {
     #[serde(default, skip_serializing)]
     #[builder(default)]
     pub taper_rule: Option<Unsupported>,
-    /// Net Expression (Unsupported)
-    #[serde(default, skip_serializing)]
-    #[builder(default)]
-    pub net_expr: Option<Unsupported>,
+    /// Net Expression
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(strip_option))]
+    pub net_expr: Option<String>,
     /// Supply Sensitivity (Unsupported)
     #[serde(default, skip_serializing)]
     #[builder(default)]
@@ -390,6 +391,24 @@ pub struct LefLayerGeometries {
     #[builder(default, setter(strip_option))]
     pub width: Option<LefDecimal>,
 }
+
+/// # Lef Via Definition
+///
+/// A definition for a type of via - these are either: 
+///     (a) "fixed" (explicitly specifying geometry on bottom/cut/top layers)
+///     (b) "generated" (by VIARULE declarations)
+///
+/// NOTE: Generated vias are unsupported
+///
+#[derive(Clone, Default, Builder, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[builder(pattern = "owned", setter(into))]
+pub struct LefViaDefinition {
+    pub name: String,
+    pub default: bool,
+    /// NOTE: Is [LefLayerGeometries] necessary and sufficient for these?
+    pub layers: Vec<LefLayerGeometries>,
+}
+
 /// # Lef Via Instance
 ///
 /// A located instance of via-type `via_name`, typically used as part of a [LefLayerGeometries] definition.
@@ -576,6 +595,7 @@ enumstr!(
         Foreign: "FOREIGN",
         Origin: "ORIGIN",
         Source: "SOURCE",
+        Default: "DEFAULT",
         NamesCaseSensitive: "NAMESCASESENSITIVE",
         NoWireExtensionAtPin: "NOWIREEXTENSIONATPIN",
         Macro: "MACRO",
@@ -649,6 +669,8 @@ enumstr!(
         GroundSensitivity: "GROUNDSENSITIVITY",
         MustJoin: "MUSTJOIN",
         Property: "PROPERTY",
+
+        // Technology definitions
         ManufacturingGrid: "MANUFACTURINGGRID",
         UseMinSpacing: "USEMINSPACING",
         ClearanceMeasure: "CLEARANCEMEASURE",

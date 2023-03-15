@@ -304,6 +304,7 @@ pub enum LefParseContext {
     Port,
     Geometry,
     Site,
+    ViaDefinition,
     Units,
     Unknown,
 }
@@ -459,18 +460,40 @@ impl<'src> LefParser<'src> {
     fn txt(&self, tok: &Token) -> &str {
         tok.substr(self.src)
     }
+
+    /// Parse the NETEXPR property for a PIN
+    fn parse_net_expr(&mut self) -> LefResult<String> {
+        let expr = self.expect_and_get_str(TokenType::StringLiteral)?;
+        let expr_string = String::from(expr);
+        self.expect(TokenType::SemiColon)?;
+        Ok(expr_string)
+    }
+
+    /// Parse a MANUFACTURINGGRID declaration
+    fn parse_manufacturing_grid(&mut self) -> LefResult<LefDecimal> {
+        self.advance()?;
+        let num = self.parse_number()?;
+        self.expect(TokenType::SemiColon)?;
+        Ok(num)
+    }
+
     /// Parse a [LefLibrary]
     fn parse_lib(&mut self) -> LefResult<LefLibrary> {
         self.ctx.push(LefParseContext::Library);
         let mut lib = LefLibraryBuilder::default();
         let mut macros = Vec::new();
         let mut sites = Vec::new();
+        let mut vias = Vec::new();
         loop {
             lib = match self.peek_key()? {
                 LefKey::Macro => {
                     macros.push(self.parse_macro()?);
                     lib
                 }
+                LefKey::Via => { 
+                    vias.push(self.parse_via_definition()?);
+                    lib
+                },
                 LefKey::Version => lib.version(self.parse_version()?),
                 LefKey::BusBitChars => lib.bus_bit_chars(self.parse_bus_bit_chars()?),
                 LefKey::DividerChar => lib.divider_char(self.parse_divider_char()?),
@@ -503,8 +526,10 @@ impl<'src> LefParser<'src> {
                     self.expect_key(LefKey::Library)?; // Expect END LIBRARY
                     break;
                 }
+                LefKey::ManufacturingGrid => {
+                    lib.manufacturing_grid(self.parse_manufacturing_grid()?)
+                },
                 LefKey::BeginExtension
-                | LefKey::ManufacturingGrid
                 | LefKey::UseMinSpacing
                 | LefKey::ClearanceMeasure
                 | LefKey::PropertyDefinitions
@@ -517,6 +542,7 @@ impl<'src> LefParser<'src> {
         }
         lib = lib.macros(macros);
         lib = lib.sites(sites);
+        lib = lib.vias(vias);
         self.ctx.pop();
         Ok(lib.build()?)
     }
@@ -674,8 +700,11 @@ impl<'src> LefParser<'src> {
                     antenna_attrs.push(LefPinAntennaAttr { key, val, layer });
                     pin
                 }
+                LefKey::NetExpr => {
+                    self.advance()?;
+                    pin.net_expr(self.parse_net_expr()?)
+                },
                 LefKey::TaperRule
-                | LefKey::NetExpr
                 | LefKey::SupplySensitivity
                 | LefKey::GroundSensitivity
                 | LefKey::MustJoin
@@ -761,6 +790,44 @@ impl<'src> LefParser<'src> {
         }
         Ok(geoms)
     }
+
+    /// Parse a via type definition
+    /// NOTE: "Generated" vias (with VIARULE) remain unsupported
+    pub(crate) fn parse_via_definition(&mut self) -> LefResult<LefViaDefinition> {
+        self.ctx.push(LefParseContext::ViaDefinition);
+        self.expect_key(LefKey::Via)?; // Eat the opening VIA keyword
+        let name = self.parse_ident()?;
+        let default = match self.peek_key()? {
+            LefKey::Default => {
+                self.advance()?; // Eat the DEFAULT token
+                true
+            },
+            _ => false,
+        };
+
+        let mut layers = Vec::new();
+        loop {
+            match self.peek_key()? {
+                LefKey::Layer => layers.push(self.parse_layer_geometries()?),
+                LefKey::End => {
+                    self.advance()?; // Eat the END Token
+                    break;
+                },
+                _ => self.fail(LefParseErrorType::InvalidKey)?,
+            }
+        }
+
+        if layers.len() != 3 {
+            self.fail_msg(LefParseErrorType::Other,
+                "VIA definitions must have exactly three layers",
+            )?;
+        }
+
+        self.expect_ident(&name)?;
+        self.ctx.pop();
+        Ok(LefViaDefinition { name, default, layers })
+    }
+
     /// Parse a set of geometries on a single layer, as commonly specified per-[LefPort]
     pub(crate) fn parse_layer_geometries(&mut self) -> LefResult<LefLayerGeometries> {
         self.ctx.push(LefParseContext::Geometry);

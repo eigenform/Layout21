@@ -51,9 +51,11 @@ impl<'wr> LefWriter<'wr> {
     /// Write a [LefLibrary] to the destination
     /// Fields are written in the LEF-recommended order
     fn write_lib(&mut self, lib: &LefLibrary) -> LefResult<()> {
-        use LefKey::{
-            BusBitChars, DividerChar, End, Library, NamesCaseSensitive, NoWireExtensionAtPin,
+        use LefKey::{ 
+            BusBitChars, DividerChar, End, Library, 
+            NamesCaseSensitive, NoWireExtensionAtPin,
             Units, Version,
+            ManufacturingGrid
         };
         if let Some(ref v) = lib.version {
             // Save a copy in our session-state
@@ -103,9 +105,14 @@ impl<'wr> LefWriter<'wr> {
             self.indent -= 1;
             self.write_line(format_args_f!("{End} {Units} "))?;
         }
+        if let Some(ref v) = lib.manufacturing_grid {
+            self.write_line(format_args_f!("{ManufacturingGrid} {v}"))?;
+        }
 
-        // VIAS would be written here
-        // if let Some(ref v) = lib.vias { }
+        // Write each via type definition
+        for via in lib.vias.iter() {
+            self.write_via_definition(via)?;
+        }
 
         // Write each site definition
         for site in lib.sites.iter() {
@@ -139,6 +146,24 @@ impl<'wr> LefWriter<'wr> {
         self.write_line(format_args_f!("{End} {site.name} ; "))?;
         Ok(())
     }
+
+    fn write_via_definition(&mut self, vt: &LefViaDefinition) -> LefResult<()> {
+        use LefKey::{Via, End};
+        let default_fmt = if vt.default { 
+            format!("{}", LefKey::Default)
+        } else { 
+           String::new()
+        };
+        self.write_line(format_args_f!("{Via} {vt.name} {default_fmt}"))?;
+        self.indent += 1;
+        for layer in vt.layers.iter() {
+            self.write_layer_geom(layer)?;
+        }
+        self.indent -= 1;
+        self.write_line(format_args_f!("{End} {} ", vt.name))?;
+        Ok(())
+    }
+
     /// Write a [LefMacro], in recommended order of fields.
     fn write_macro(&mut self, mac: &LefMacro) -> LefResult<()> {
         use LefKey::{By, End, Foreign, Macro, Obs, Origin, Site, Size, Source};
@@ -203,7 +228,9 @@ impl<'wr> LefWriter<'wr> {
     }
     /// Write a [LefPin] definition
     fn write_pin(&mut self, pin: &LefPin) -> LefResult<()> {
-        use LefKey::{AntennaModel, Direction, End, Layer, Pin, Shape, Use};
+        use LefKey::{
+            AntennaModel, Direction, End, Layer, Pin, Shape, Use, NetExpr
+        };
         self.write_line(format_args_f!("{Pin} {pin.name} "))?;
         self.indent += 1;
         if let Some(ref v) = pin.direction {
@@ -237,6 +264,9 @@ impl<'wr> LefWriter<'wr> {
         // {
         //     return Err(LefError::Str("Unsupported LefPin Attr".into()));
         // }
+        if let Some(ref v) = pin.net_expr {
+            self.write_line(format_args_f!("{NetExpr} {v} ; "))?;
+        }
 
         // Write each PORT
         for port in pin.ports.iter() {
